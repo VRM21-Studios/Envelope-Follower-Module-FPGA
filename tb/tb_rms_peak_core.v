@@ -20,9 +20,9 @@ module tb_rms_peak_core;
     // ========================================================================
     // 1. PARAMETERS
     // ========================================================================
-    parameter DATA_W      = 16;
-    parameter ALPHA_W     = 16;
-    parameter CLK_PERIOD = 20; // 50 MHz clock (period in ns)
+    parameter integer DATA_W     = 16;
+    parameter integer ALPHA_W    = 16;
+    parameter integer CLK_PERIOD = 20; // 50 MHz clock (period in ns)
 
     // ========================================================================
     // 2. SIGNAL DECLARATIONS
@@ -63,7 +63,7 @@ module tb_rms_peak_core;
     // ========================================================================
     // Explicit initialization guarantees no X/Z clock startup.
     initial begin
-        clk = 0;
+        clk = 1'b0;
         forever #(CLK_PERIOD / 2) clk = ~clk;
     end
 
@@ -71,11 +71,11 @@ module tb_rms_peak_core;
     // 5. CSV DATA LOGGING
     // ========================================================================
     // Logged fields:
-    //   time  : simulation time
-    //   din   : signed input sample
-    //   dout  : envelope output
-    //   alpha : smoothing coefficient
-    //   bypass: bypass state
+    //   time   : simulation time
+    //   din    : signed input sample
+    //   dout   : envelope output
+    //   alpha  : smoothing coefficient
+    //   bypass : bypass state
     initial begin
         file_h = $fopen("tb_data_rms_peak_core.csv", "w");
         $fdisplay(file_h, "time,din,dout,alpha,bypass");
@@ -85,7 +85,7 @@ module tb_rms_peak_core;
             if (rst_n) begin
                 $fdisplay(
                     file_h,
-                    "%t,%d,%d,%d,%b",
+                    "%0d,%0d,%0d,%0d,%b",
                     $time,
                     $signed(din),
                     dout,
@@ -108,42 +108,42 @@ module tb_rms_peak_core;
         // A. Initial Conditions
         // --------------------------------------------------------------------
         i      = 0;
-        rst_n  = 0;
-        en     = 0;
-        bypass = 0;
+        rst_n  = 1'b0;
+        en     = 1'b0;
+        bypass = 1'b0;
         alpha  = 16'h0000;
-        din    = 0;
+        din    = 16'sd0;
 
         // --------------------------------------------------------------------
         // B. Reset Sequence
         // --------------------------------------------------------------------
         #(CLK_PERIOD * 10); // Hold reset for 10 cycles
-        rst_n = 1;
-        en    = 1;
+        rst_n = 1'b1;
+        en    = 1'b1;
         #(CLK_PERIOD * 5);
 
         // --------------------------------------------------------------------
         // TEST 1: Step Response (Fast Attack)
         // --------------------------------------------------------------------
-        $display("Time: %0t | Test 1: Step Response", $time);
+        $display("Time: %0d | Test 1: Step Response", $time);
         alpha = 16'h4000; // Alpha = 0.5 (fast response)
         din   = 16'sd15000;
         #(CLK_PERIOD * 50);
 
         // Return to zero input
-        din = 0;
+        din = 16'sd0;
         #(CLK_PERIOD * 50);
 
         // --------------------------------------------------------------------
         // TEST 2: Sine Wave Input (Slow Smoothing)
         // --------------------------------------------------------------------
-        $display("Time: %0t | Test 2: Sine Wave", $time);
+        $display("Time: %0d | Test 2: Sine Wave", $time);
         alpha = 16'h0200; // Small alpha (smooth envelope)
         freq  = 0.05;
 
         for (i = 0; i < 300; i = i + 1) begin
             phi = 2.0 * 3.14159 * freq * i;
-            din = $signed(16'sd20000 * $sin(phi));
+            din = $rtoi(20000.0 * $sin(phi));
             @(posedge clk);
         end
 
@@ -152,7 +152,7 @@ module tb_rms_peak_core;
         // --------------------------------------------------------------------
         // Observe envelope response as alpha transitions
         // from slow to fast while input is constant.
-        $display("Time: %0t | Test 3: Dynamic Alpha", $time);
+        $display("Time: %0d | Test 3: Dynamic Alpha", $time);
         din = 16'sd25000;
 
         for (i = 0; i < 100; i = i + 1) begin
@@ -164,21 +164,21 @@ module tb_rms_peak_core;
         // --------------------------------------------------------------------
         // TEST 4: Corner Case (Minimum Signed Value)
         // --------------------------------------------------------------------
-        $display("Time: %0t | Test 4: Corner Case Input", $time);
+        $display("Time: %0d | Test 4: Corner Case Input", $time);
         alpha = 16'h7FFF;      // Maximum alpha
         din   = -16'sd32768;   // Minimum signed 16-bit value
         @(posedge clk);
         #(CLK_PERIOD * 10);
 
-        din = 0;
+        din = 16'sd0;
         #(CLK_PERIOD * 20);
 
         // --------------------------------------------------------------------
         // TEST 5: Bypass Mode
         // --------------------------------------------------------------------
         // Verify timing alignment and correct bypass behavior.
-        $display("Time: %0t | Test 5: Bypass Mode", $time);
-        bypass = 1;
+        $display("Time: %0d | Test 5: Bypass Mode", $time);
+        bypass = 1'b1;
         din    = 16'sd10000;
         #(CLK_PERIOD * 10);
 
@@ -188,7 +188,7 @@ module tb_rms_peak_core;
         // --------------------------------------------------------------------
         // END OF SIMULATION
         // --------------------------------------------------------------------
-        $display("Time: %0t | Simulation Finished", $time);
+        $display("Time: %0d | Simulation Finished", $time);
         $fclose(file_h);
         $stop;
     end
