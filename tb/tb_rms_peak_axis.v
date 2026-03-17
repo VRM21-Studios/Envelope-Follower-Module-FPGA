@@ -23,9 +23,9 @@ module tb_rms_peak_axis;
     // ========================================================================
     // 1. PARAMETERS
     // ========================================================================
-    parameter C_S_AXI_DATA_WIDTH = 32;
-    parameter C_S_AXI_ADDR_WIDTH = 4;
-    parameter CLK_PERIOD         = 20; // 50 MHz clock
+    parameter integer C_S_AXI_DATA_WIDTH = 32;
+    parameter integer C_S_AXI_ADDR_WIDTH = 4;
+    parameter integer CLK_PERIOD         = 20; // 50 MHz clock
 
     // ========================================================================
     // 2. SIGNAL DECLARATIONS
@@ -123,7 +123,7 @@ module tb_rms_peak_axis;
     // 4. CLOCK GENERATION
     // ========================================================================
     initial begin
-        aclk = 0;
+        aclk = 1'b0;
         forever #(CLK_PERIOD / 2) aclk = ~aclk;
     end
 
@@ -178,12 +178,12 @@ module tb_rms_peak_axis;
             if (aresetn && m_axis_tvalid && m_axis_tready) begin
                 $fdisplay(
                     file_h,
-                    "%t,%d,%d,%d,%d,%b",
+                    "%0d,%0d,%0d,%0d,%0d,%b",
                     $time,
                     $signed(s_axis_tdata[15:0]),
                     $signed(s_axis_tdata[31:16]),
-                    m_axis_tdata[15:0],
-                    m_axis_tdata[31:16],
+                    $signed(m_axis_tdata[15:0]),
+                    $signed(m_axis_tdata[31:16]),
                     m_axis_tvalid
                 );
             end
@@ -202,19 +202,24 @@ module tb_rms_peak_axis;
         // --------------------------------------------------------------------
         // Initial Conditions
         // --------------------------------------------------------------------
-        aresetn = 0;
+        aresetn = 1'b0;
         i       = 0;
 
         // AXI-Stream idle
-        s_axis_tdata  = 0;
-        s_axis_tvalid = 0;
-        s_axis_tlast  = 0;
+        s_axis_tdata  = 32'd0;
+        s_axis_tvalid = 1'b0;
+        s_axis_tlast  = 1'b0;
 
         // AXI-Lite idle
-        s_axi_awaddr  = 0; s_axi_awvalid = 0;
-        s_axi_wdata   = 0; s_axi_wvalid  = 0; s_axi_wstrb = 0;
-        s_axi_bready  = 0;
-        s_axi_araddr  = 0; s_axi_arvalid = 0; s_axi_rready = 0;
+        s_axi_awaddr  = 4'd0; 
+        s_axi_awvalid = 1'b0;
+        s_axi_wdata   = 32'd0; 
+        s_axi_wvalid  = 1'b0; 
+        s_axi_wstrb   = 4'd0;
+        s_axi_bready  = 1'b0;
+        s_axi_araddr  = 4'd0; 
+        s_axi_arvalid = 1'b0; 
+        s_axi_rready  = 1'b0;
 
         // Downstream always ready
         m_axis_tready = 1'b1;
@@ -223,7 +228,7 @@ module tb_rms_peak_axis;
         // Reset Sequence
         // --------------------------------------------------------------------
         #(CLK_PERIOD * 10);
-        aresetn = 1;
+        aresetn = 1'b1;
         #(CLK_PERIOD * 10);
 
         // --------------------------------------------------------------------
@@ -252,7 +257,7 @@ module tb_rms_peak_axis;
         s_axis_tdata = {stim_r, stim_l};
 
         #(CLK_PERIOD);
-        s_axis_tdata = 0;
+        s_axis_tdata = 32'd0;
 
         // Observe decay
         #(CLK_PERIOD * 50);
@@ -269,16 +274,16 @@ module tb_rms_peak_axis;
         for (i = 0; i < 300; i = i + 1) begin
             phi = 2.0 * 3.14159 * freq * i;
 
-            stim_l = $signed(16'sd20000 * $sin(phi)); // sine
-            stim_r = $signed(16'sd10000 * $cos(phi)); // cosine (90 deg phase)
+            stim_l = $rtoi(20000.0 * $sin(phi)); // sine
+            stim_r = $rtoi(10000.0 * $cos(phi)); // cosine (90 deg phase)
 
             s_axis_tdata  = {stim_r, stim_l};
             s_axis_tvalid = 1'b1;
             @(posedge aclk);
         end
 
-        s_axis_tvalid = 0;
-        s_axis_tdata  = 0;
+        s_axis_tvalid = 1'b0;
+        s_axis_tdata  = 32'd0;
         #(CLK_PERIOD * 20);
 
         // --------------------------------------------------------------------
@@ -297,7 +302,7 @@ module tb_rms_peak_axis;
             @(posedge aclk);
         end
 
-        s_axis_tvalid = 0;
+        s_axis_tvalid = 1'b0;
 
         // --------------------------------------------------------------------
         // End of Simulation
