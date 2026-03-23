@@ -1,14 +1,13 @@
-# RMS / Peak Envelope Detector (AXI-Stream) on FPGA
+# Linear Ramp Envelope Follower (AXI-Stream) on FPGA
 
 This repository provides a **reference RTL implementation** of a
-**real-time RMS / Peak envelope detector**
+**real-time Linear Ramp Envelope Follower and Dynamics Processor**
 implemented in **Verilog**, integrated with **AXI-Stream** and **AXI-Lite**.
 
-Target platform: **AMD Kria KV260**  
-Focus: **deterministic RTL DSP design, fixed-point behavior, and AXI correctness**
+Target platform: **AMD Kria KV260** Focus: **deterministic RTL DSP design, fixed-point stability, and AXI correctness**
 
 This module is intended for **continuous real-time audio streaming**,  
-not block-based or windowed signal processing.
+featuring ultra-low latency and absolute mathematical stability.
 
 ---
 
@@ -16,73 +15,77 @@ not block-based or windowed signal processing.
 
 This design implements:
 
-- **Function**: Envelope follower (peak-style, leaky integrator)
-- **Purpose**: Level detection for dynamics control (ducking, gating, metering)
-- **Data type**: Fixed-point arithmetic
-- **Scope**: Minimal, single-purpose DSP building block
+- **Function**: Linear ramp envelope generator & inline gain controller
+- **Purpose**: Hardware-stable dynamics processing (ducking, gating, auto-tremolo)
+- **Data type**: Fixed-point arithmetic (strictly Q4.12 for gain)
+- **Scope**: Minimal, highly reliable DSP building block
 
-Despite the name, the implementation is **not a windowed RMS calculator**.  
-It behaves as a **hardware-friendly envelope detector**, suitable for FPGA pipelines.
+Unlike legacy IIR (leaky integrator) designs, this implementation uses a **counter-based linear ramp state machine**. It completely eliminates fixed-point limit-cycle artifacts and provides exact, predictable convergence to target gain levels.
 
 ---
 
 ## Key Characteristics
 
 - RTL written in **Verilog**
-- **AXI-Stream** stereo audio interface
-- **AXI-Lite** runtime control
+- **AXI-Stream** stereo audio interface (inline processing)
+- **AXI-Lite** runtime control (5 registers)
 - Fully synchronous, cycle-accurate design
-- Deterministic latency
-- Safe fixed-point arithmetic (no wraparound)
+- **Ultra-low deterministic latency (1 cycle)**
+- Safe fixed-point arithmetic (Q4.12 truncation without clipping)
 - Designed for **real-time streaming DSP**
-- No software runtime included
+- No software runtime included (Python used only for testbed/modulation)
 
 ---
 
 ## Architecture
 
 High-level structure:
-
-```
-AXI-Stream In (Stereo)
-|
-v
-+---------------------------+
-| RMS / Peak Core         |
-| - Abs rectifier         |
-| - Leaky integrator      |
-| - Bypass path (aligned) |
-+---------------------------+
-|
-v
-AXI-Stream Out (Stereo)
 ```
 
+    AXI-Stream In (Stereo 32-bit packed)
+            |
+            v
+    +-----------------------------------------+
+    | Envelope Follower Core                  |
+    | - Stereo-Linked Abs Rectifier           |
+    | - Peak/Threshold Comparator             |
+    | - Linear Ramp Generator (Counter-based) |
+    +-----------------------------------------+
+            |                  |
+            | (Audio)          | (Q4.12 Envelope Gain)
+            v                  v
+    +-----------------------------------------+
+    | Gain Application Stage                  |
+    | - 32-bit Multiplication                 |
+    | - Arithmetic Shift & Truncation (>>> 12)|
+    +-----------------------------------------+
+            |
+            v
+    AXI-Stream Out (Gain Applied, Stereo 32-bit)
 
+```
 Design notes:
 
-- Each channel uses an **independent core**
-- No shared state between Left / Right
-- Control plane is fully separated from data plane
-- No hidden buffering or block processing
+- Peak detection is **stereo-linked** (the loudest channel dictates the gain reduction for both channels, preserving the stereo image).
+- Control plane (AXI-Lite) is fully separated from data plane (AXI-Stream).
+- No hidden buffering, block processing, or feedback loops.
 
 ---
 
 ## Data Format
 
-### AXI-Stream
+### AXI-Stream (Audio In & Out)
 
-- Data width: **32-bit**
+- Data width: **32-bit packed**
 - Stereo layout:
-  - `[15:0]`   → Left
-  - `[31:16]`  → Right
+  - `[15:0]`   → Left Channel
+  - `[31:16]`  → Right Channel
 - Samples are signed **16-bit PCM**
 
-### Envelope Output
+### Internal Envelope Gain
 
-- Unsigned magnitude (post-rectification)
-- Same width as input audio
-- Time-aligned with fixed latency
+- Data width: **16-bit signed**
+- Format: **Q4.12 Fixed-Point** (e.g., `4096` = 1.0, `2048` = 0.5)
 
 ---
 
@@ -90,17 +93,17 @@ Design notes:
 
 | Stage | Cycles |
 |----|----|
-| Absolute value | 1 |
-| Envelope accumulator | 1 |
-| Output register | 1 |
-| **Total** | **3 cycles (fixed)** |
+| Envelope Calculation (Core) | 0 (Combinatorial) |
+| Gain Application (Multiplier) | 0 (Combinatorial) |
+| Output Register / Alignment | 1 |
+| **Total** | **1 cycle (fixed)** |
 
 Latency is:
 
-- deterministic
-- independent of input signal
-- independent of `alpha`
-- independent of bypass
+- ultra-low and deterministic
+- independent of input signal amplitude
+- independent of attack/release settings
+- perfectly phase-aligned
 
 ---
 
@@ -108,16 +111,13 @@ Latency is:
 
 | Offset | Register | Description |
 |----:|----|----|
-| 0x00 | CONTROL | Bit 0: Enable, Bit 1: Bypass |
-| 0x04 | ALPHA | Envelope smoothing coefficient |
+| 0x00 | CTRL | Bit 0: Enable (1 = Active, 0 = Bypass) |
+| 0x04 | THRESHOLD | Amplitude threshold to trigger the attack phase |
+| 0x08 | TARGET_LEVEL | Target gain when threshold is breached (Q4.12) |
+| 0x0C | ATTACK_RATE | Clock cycles per 1-LSB gain decrement |
+| 0x10 | RELEASE_RATE | Clock cycles per 1-LSB gain increment |
 
-### Alpha
-
-- Format: **Q0.16**
-- Larger value → faster response
-- Smaller value → smoother envelope
-
-Alpha can be updated **during active streaming**.
+All registers can be updated safely **during active streaming**.
 
 ---
 
@@ -127,16 +127,13 @@ Alpha can be updated **during active streaming**.
 
 Simulation verifies:
 
-- Rectifier correctness
-- Envelope behavior (attack / release)
-- Runtime alpha updates
-- Bypass correctness
-- AXI-Stream handshake behavior
-- Stereo independence
+- Stereo-linked rectifier correctness
+- Linear ramp behavior (attack / release slopes)
+- Runtime parameter updates (Threshold, Target, Rates)
+- AXI-Stream handshake and backpressure safety
+- Q4.12 mathematical truncation
 
 Results are logged as CSV and plotted offline.
-
-See `/results/README.md` for waveform interpretation.
 
 ---
 
@@ -144,9 +141,10 @@ See `/results/README.md` for waveform interpretation.
 
 - Tested on **AMD Kria KV260**
 - Integrated using AXI DMA + PYNQ
-- Python used only as stimulus and observability layer
+- Validated real-time continuous streaming
+- Validated dynamic modulation (e.g., using Python PS to drive the `TARGET_LEVEL` for an Auto-Tremolo effect)
 
-Bitstreams and PYNQ overlays are intentionally not included.
+Python is used only as a stimulus and observability layer. Bitstreams and PYNQ overlays are intentionally not included.
 
 ---
 
@@ -154,19 +152,18 @@ Bitstreams and PYNQ overlays are intentionally not included.
 
 This repository focuses on:
 
-- **Predictability**
-- **Numerical safety**
+- **Predictability & Mathematical Stability**
+- **Numerical safety (Q4.12 math)**
 - **RTL clarity**
 - **Streaming correctness**
 
 It intentionally avoids:
 
-- Windowed RMS logic
-- Psychoacoustic smoothing
-- Feature-rich control
-- Software-oriented abstractions
+- Legacy IIR filter instabilities
+- Psychoacoustic smoothing (soft-knee)
+- Feature-rich software-oriented abstractions
 
-This is a **hardware-first envelope detector**.
+This is a **hardware-first dynamics building block**.
 
 ---
 
@@ -174,12 +171,11 @@ This is a **hardware-first envelope detector**.
 
 - A clean **RTL reference implementation**
 - A reusable building block for:
-  - ducking
-  - compressors
-  - gates
-  - envelope followers
+  - duckers / limiters
+  - dynamic gain controllers
+  - tremolo modulators
 - A teaching-quality example of:
-  - fixed-point DSP
+  - fixed-point DSP scaling
   - AXI-Stream integration
   - control/data plane separation
 
@@ -187,12 +183,11 @@ This is a **hardware-first envelope detector**.
 
 ## What This Repository Is Not
 
-- ❌ A full dynamics processor
+- ❌ A proportional audio compressor (no complex ratio calculation)
 - ❌ A software DSP library
-- ❌ A drop-in audio product
-- ❌ A perceptually tuned RMS meter
+- ❌ A drop-in plug-and-play audio product
 
-The scope is intentionally narrow.
+The scope is intentionally narrow and reliable.
 
 ---
 
@@ -208,19 +203,6 @@ Additional documentation is available in `/docs`:
 
 ---
 
-## Project Status
-
-This repository is **complete and stable**.
-
-- RTL frozen
-- Simulation complete
-- Hardware validated
-- No further feature development planned
-
-Published as a **reference design**.
-
----
-
 ## License
 
 MIT License  
@@ -228,175 +210,4 @@ Provided as-is, without warranty.
 
 ---
 
-> **This design demonstrates engineering decisions, not algorithmic ambition.**
-
-Design notes:
-
-- Each channel uses an **independent core**
-- No shared state between Left / Right
-- Control plane is fully separated from data plane
-- No hidden buffering or block processing
-
----
-
-## Data Format
-
-### AXI-Stream
-
-- Data width: **32-bit**
-- Stereo layout:
-  - `[15:0]`   → Left
-  - `[31:16]`  → Right
-- Samples are signed **16-bit PCM**
-
-### Envelope Output
-
-- Unsigned magnitude (post-rectification)
-- Same width as input audio
-- Time-aligned with fixed latency
-
----
-
-## Latency
-
-| Stage | Cycles |
-|----|----|
-| Absolute value | 1 |
-| Envelope accumulator | 1 |
-| Output register | 1 |
-| **Total** | **3 cycles (fixed)** |
-
-Latency is:
-
-- deterministic
-- independent of input signal
-- independent of `alpha`
-- independent of bypass
-
----
-
-## Control Interface (AXI-Lite)
-
-| Offset | Register | Description |
-|----:|----|----|
-| 0x00 | CONTROL | Bit 0: Enable, Bit 1: Bypass |
-| 0x04 | ALPHA | Envelope smoothing coefficient |
-
-### Alpha
-
-- Format: **Q0.16**
-- Larger value → faster response
-- Smaller value → smoother envelope
-
-Alpha can be updated **during active streaming**.
-
----
-
-## Verification & Validation
-
-### RTL Simulation
-
-Simulation verifies:
-
-- Rectifier correctness
-- Envelope behavior (attack / release)
-- Runtime alpha updates
-- Bypass correctness
-- AXI-Stream handshake behavior
-- Stereo independence
-
-Results are logged as CSV and plotted offline.
-
-See `/results/README.md` for waveform interpretation.
-
----
-
-### Hardware Validation
-
-- Tested on **AMD Kria KV260**
-- Integrated using AXI DMA + PYNQ
-- Python used only as stimulus and observability layer
-
-Bitstreams and PYNQ overlays are intentionally not included.
-
----
-
-## Design Philosophy
-
-This repository focuses on:
-
-- **Predictability**
-- **Numerical safety**
-- **RTL clarity**
-- **Streaming correctness**
-
-It intentionally avoids:
-
-- Windowed RMS logic
-- Psychoacoustic smoothing
-- Feature-rich control
-- Software-oriented abstractions
-
-This is a **hardware-first envelope detector**.
-
----
-
-## What This Repository Is
-
-- A clean **RTL reference implementation**
-- A reusable building block for:
-  - ducking
-  - compressors
-  - gates
-  - envelope followers
-- A teaching-quality example of:
-  - fixed-point DSP
-  - AXI-Stream integration
-  - control/data plane separation
-
----
-
-## What This Repository Is Not
-
-- ❌ A full dynamics processor
-- ❌ A software DSP library
-- ❌ A drop-in audio product
-- ❌ A perceptually tuned RMS meter
-
-The scope is intentionally narrow.
-
----
-
-## Documentation
-
-Additional documentation is available in `/docs`:
-
-- `address_map.md`
-- `build_overview.md`
-- `design_rationale.md`
-- `latency_and_data_format.md`
-- `validation_notes.md`
-
----
-
-## Project Status
-
-This repository is **complete and stable**.
-
-- RTL frozen
-- Simulation complete
-- Hardware validated
-- No further feature development planned
-
-Published as a **reference design**.
-
----
-
-## License
-
-MIT License  
-Provided as-is, without warranty.
-
----
-
-> **This design demonstrates engineering decisions, not algorithmic ambition.**
+> **This design demonstrates strict engineering decisions and fixed-point stability, not algorithmic ambition.**
