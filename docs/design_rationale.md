@@ -1,26 +1,34 @@
 # Design Rationale
 
-The Linear Ramp Envelope Follower is designed as a **stable, streaming hardware block**. It specifically moves away from feedback-based IIR filters (leaky integrators) used in earlier iterations to eliminate fixed-point instability and limit-cycle artifacts.
+The RMS / Peak envelope extractor is designed as a **pure streaming
+hardware block**, avoiding feedback paths, control-heavy logic, or
+time-varying state machines.
 
 ## Key Design Decisions
 
-### 1. Linear Ramp State Machine
-- Replaces the legacy first-order IIR smoothing
-- Uses strict counter-based increments/decrements for Attack and Release phases
-- Eliminates mathematical instability and guarantees exact, predictable convergence to the target gain
-
-### 2. Streaming-Only Architecture
-- One input sample produces one output sample (or stereo pair)
+### 1. Streaming-Only Architecture
+- One input sample produces one output sample
 - No frame buffering
-- Deterministic 1-clock-cycle pipeline latency in the AXI wrapper
+- No global control state
 
-### 3. Fixed-Point Arithmetic
-- Envelope gain and target levels are strictly represented in Q4.12 format
-- Multiplication bit-growth is explicitly managed, shifted, and truncated safely
-- Avoids non-deterministic behavior across different synthesis tools
+This guarantees predictable latency and simplifies verification.
 
-### 4. Separation of Core and AXI Logic
-- `*_core.v` implements the pure DSP math, peak detection, and envelope generation
-- `*_axis.v` handles AXI-Stream (audio datapath), AXI-Lite (control registers), and applies the final audio multiplication
+### 2. Fixed-Point Arithmetic
+- Fixed-point math is used throughout
+- Bit growth is explicitly managed
+- Saturation is preferred over wrap-around
 
-This separation allows the core envelope detector to be easily reused in non-AXI environments or custom audio pipelines.
+This avoids non-deterministic behavior across synthesis tools.
+
+### 3. Separation of Core and AXI Logic
+- `*_core.v` implements DSP math only
+- `*_axis.v` handles AXI-Stream and AXI-Lite
+
+This separation allows the core to be reused in non-AXI environments.
+
+### 4. No “Audio-Rate Control” Assumptions
+- No LFOs
+- No feedback smoothing
+- No psychoacoustic tuning
+
+The module is intentionally **boring but reliable**.
