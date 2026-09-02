@@ -11,6 +11,14 @@ featuring ultra-low latency and absolute mathematical stability.
 
 ---
 
+## Motivation
+
+This project was developed as part of a self-directed exploration of real-time audio DSP and hardware-based dynamics processing.
+
+An envelope follower introduces signal-dependent behavior and internal state, making it useful for studying how amplitude analysis and control signals can be generated directly within a deterministic RTL architecture. The project also explores the interaction between fixed-point arithmetic, streaming dataflow, and predictable real-time behavior.
+
+---
+
 ## Overview
 
 This design implements:
